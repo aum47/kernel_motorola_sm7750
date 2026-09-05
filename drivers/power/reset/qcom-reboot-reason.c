@@ -17,9 +17,6 @@
 #include <linux/nvmem-consumer.h>
 #include <linux/input/qpnp-power-on.h>
 
-static char *sys_restart_mode = "NULL";
-module_param(sys_restart_mode, charp, 0644);
-
 struct qcom_reboot_reason {
 	struct device *dev;
 	struct notifier_block reboot_nb;
@@ -64,17 +61,6 @@ static int qcom_reboot_reason_reboot(struct notifier_block *this,
 		}
 	}
 
-	pr_info("%s: sys_restart_mode [%s]\n", __func__, sys_restart_mode);
-	if (!strcmp(sys_restart_mode, "panic")) {
-		/* Trigger a real panic on debug setting */
-		BUG();
-	}
-	if (!strcmp(sys_restart_mode, "recovery_panic")) {
-		if (!strcmp(cmd, "recovery")) {
-			/* Trigger a real panic on debug setting */
-			BUG();
-		}
-	}
 	return NOTIFY_OK;
 }
 

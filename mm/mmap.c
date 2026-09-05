@@ -49,7 +49,9 @@
 #include <linux/oom.h>
 #include <linux/sched/mm.h>
 #include <linux/ksm.h>
+#include <linux/memfd.h>
 #include <linux/dma-buf.h>
+#include <linux/wrapfd.h>
 
 #include <linux/uaccess.h>
 #include <asm/cacheflush.h>
@@ -114,7 +116,7 @@ void vma_set_page_prot(struct vm_area_struct *vma)
 static void __remove_shared_vm_struct(struct vm_area_struct *vma,
 		struct file *file, struct address_space *mapping)
 {
-	if (vma->vm_flags & VM_SHARED)
+	if (vma_is_shared_maywrite(vma))
 		mapping_unmap_writable(mapping);
 
 	flush_dcache_mmap_lock(mapping);
@@ -394,7 +396,7 @@ static unsigned long count_vma_pages_range(struct mm_struct *mm,
 static void __vma_link_file(struct vm_area_struct *vma,
 			    struct address_space *mapping)
 {
-	if (vma->vm_flags & VM_SHARED)
+	if (vma_is_shared_maywrite(vma))
 		mapping_allow_writable(mapping);
 
 	flush_dcache_mmap_lock(mapping);
@@ -1309,6 +1311,7 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 
 	if (file) {
 		struct inode *inode = file_inode(file);
+		unsigned int seals = memfd_file_seals(file);
 		unsigned long flags_mask;
 
 		if (!file_mmap_ok(file, inode, pgoff, len))
@@ -1349,6 +1352,8 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 			vm_flags |= VM_SHARED | VM_MAYSHARE;
 			if (!(file->f_mode & FMODE_WRITE))
 				vm_flags &= ~(VM_MAYWRITE | VM_SHARED);
+			else if (is_readonly_sealed(seals, vm_flags))
+				vm_flags &= ~VM_MAYWRITE;
 			fallthrough;
 		case MAP_PRIVATE:
 			if (!(file->f_mode & FMODE_READ))
@@ -2898,7 +2903,7 @@ cannot_expand:
 	mm->map_count++;
 	if (vma->vm_file) {
 		i_mmap_lock_write(vma->vm_file->f_mapping);
-		if (vma->vm_flags & VM_SHARED)
+		if (vma_is_shared_maywrite(vma))
 			mapping_allow_writable(vma->vm_file->f_mapping);
 
 		flush_dcache_mmap_lock(vma->vm_file->f_mapping);
@@ -2981,7 +2986,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 		return -EINVAL;
 
 	/* Map writable and ensure this isn't a sealed memfd. */
-	if (file && (vm_flags & VM_SHARED)) {
+	if (file && is_shared_maywrite(vm_flags)) {
 		int error = mapping_map_writable(file->f_mapping);
 
 		if (error)
@@ -3146,6 +3151,14 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 		if (!next)
 			goto out;
 	}
+
+	/*
+	 * Remapping pages of the wrapfd is not supported since vma->vm_file
+	 * points to the file object representing the wrapped content and not
+	 * the wrapfd.
+	 */
+	if (unlikely(is_wrapfd_vma(vma)))
+		goto out;
 
 	ret = do_mmap(vma->vm_file, start, size,
 			prot, flags, 0, pgoff, &populate, NULL);
@@ -3461,6 +3474,7 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
 	struct mm_struct *mm = vma->vm_mm;
 	struct vm_area_struct *new_vma, *prev;
 	bool faulted_in_anon_vma = true;
+	int acct_err = 0;
 	VMA_ITERATOR(vmi, mm, addr);
 
 	/*
@@ -3505,6 +3519,8 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
 		new_vma = vm_area_dup(vma);
 		if (!new_vma)
 			goto out;
+		/* Do not preserve padding flags on the new VMA */
+		vm_flags_clear(new_vma, VM_PAD_MASK);
 		new_vma->vm_start = addr;
 		new_vma->vm_end = addr + len;
 		new_vma->vm_pgoff = pgoff;
@@ -3512,8 +3528,16 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
 			goto out_free_vma;
 		if (anon_vma_clone(new_vma, vma))
 			goto out_free_mempol;
-		if (new_vma->vm_file)
+		if (new_vma->vm_file) {
 			get_file(new_vma->vm_file);
+			if (is_dma_buf_file(new_vma->vm_file)) {
+				acct_err = dma_buf_account_task(new_vma->vm_file->private_data,
+								new_vma->vm_mm->dmabuf_info);
+
+				if (acct_err)
+					pr_err("failed to account dmabuf, err %d\n", acct_err);
+			}
+		}
 		if (new_vma->vm_ops && new_vma->vm_ops->open)
 			new_vma->vm_ops->open(new_vma);
 		if (vma_link(mm, new_vma))
@@ -3525,8 +3549,12 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
 out_vma_link:
 	vma_close(new_vma);
 
-	if (new_vma->vm_file)
+	if (new_vma->vm_file) {
+		if (is_dma_buf_file(new_vma->vm_file) && !acct_err)
+			dma_buf_unaccount_task(new_vma->vm_file->private_data,
+					       new_vma->vm_mm->dmabuf_info);
 		fput(new_vma->vm_file);
+	}
 
 	unlink_anon_vmas(new_vma);
 out_free_mempol:

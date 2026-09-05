@@ -29,6 +29,8 @@
 #include <trace/hooks/ufshcd.h>
 #include <linux/ipc_logging.h>
 #include <soc/qcom/minidump.h>
+#include <linux/crypto-qti-common.h>
+#include <linux/of_platform.h>
 #if IS_ENABLED(CONFIG_SCHED_WALT)
 #include <linux/sched/walt.h>
 #endif
@@ -652,6 +654,17 @@ static int ufs_qcom_ice_init(struct ufs_qcom_host *host)
 
 	if (IS_ERR_OR_NULL(ice))
 		return PTR_ERR_OR_ZERO(ice);
+
+	if (IS_ENABLED(CONFIG_QTI_CRYPTO_FDE)) {
+		int err;
+
+		err = crypto_qti_ice_init_fde_node(dev);
+
+		if (err) {
+			dev_err(dev, "Failed to add fde node, err=%d\n", err);
+			return err;
+		}
+	}
 
 	host->ice = ice;
 	hba->caps |= UFSHCD_CAP_CRYPTO;
@@ -2823,7 +2836,7 @@ static int ufs_qcom_setup_clocks(struct ufs_hba *hba, bool on,
 		break;
 	case POST_CHANGE:
 		if (!on) {
-			if (ufs_qcom_is_link_hibern8(hba)) {
+			if ((ufs_qcom_is_link_hibern8(hba)) || (ufs_qcom_is_link_off(hba))) {
 				ufs_qcom_phy_set_src_clk_h8_enter(phy);
 				/*
 				 * As XO is set to the source of lane clocks, hence
@@ -5326,8 +5339,28 @@ static struct ufs_dev_quirk ufs_qcom_dev_fixups[] = {
 	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
 	  .model = UFS_ANY_MODEL,
 	  .quirk = UFS_DEVICE_QUIRK_PA_HIBER8TIME |
-			UFS_DEVICE_QUIRK_PA_TX_HSG1_SYNC_LENGTH |
-			UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+			UFS_DEVICE_QUIRK_PA_TX_HSG1_SYNC_LENGTH },
+	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+	  .model = "KLUEG4RHHD-B0G1",
+	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+	  .model = "KLUFG8RHHD-B0G1",
+	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+	  .model = "KLUGGARHHD-B0G1",
+	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+	  .model = "KLUEG4RHHF-F0G1",
+	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+	  .model = "KLUFG8RHHF-F0G1",
+	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+	  .model = "KLUFG4NHHB-F0G1",
+	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+	  .model = "KLUGG8NHHB-F0G1",
+	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
 	{ .wmanufacturerid = UFS_VENDOR_MICRON,
 	  .model = UFS_ANY_MODEL,
 	  .quirk = UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM },
@@ -6249,6 +6282,30 @@ static void ufs_qcom_update_sdev(void *param, struct scsi_device *sdev)
 /*
  * Refer: common/include/trace/hooks/ufshcd.h for available hooks
  */
+static void ufs_qcom_hook_prepare_command(void *param, struct ufs_hba *hba,
+					   struct request *rq, struct ufshcd_lrb *lrbp, int *err)
+{
+	if (IS_ENABLED(CONFIG_QTI_CRYPTO_FDE)) {
+		struct ice_data_setting setting;
+
+		if (!rq->crypt_keyslot) {
+			if (!crypto_qti_ice_config_start(rq, &setting)) {
+				if ((rq_data_dir(rq) == WRITE) ? setting.encr_bypass :
+						setting.decr_bypass) {
+					lrbp->crypto_key_slot = -1;
+				} else {
+					lrbp->crypto_key_slot = setting.crypto_data.key_index;
+					lrbp->data_unit_num = rq->bio->bi_iter.bi_sector >>
+							      ICE_CRYPTO_DATA_UNIT_4_KB;
+				}
+			}
+		} else {
+			lrbp->crypto_key_slot = blk_crypto_keyslot_index(rq->crypt_keyslot);
+			lrbp->data_unit_num = rq->crypt_ctx->bc_dun[0];
+		}
+	}
+}
+
 static void ufs_qcom_register_hooks(void)
 {
 	register_trace_android_vh_ufs_send_command(ufs_qcom_hook_send_command,
@@ -6262,6 +6319,8 @@ static void ufs_qcom_register_hooks(void)
 	register_trace_android_vh_ufs_check_int_errors(
 				ufs_qcom_hook_check_int_errors, NULL);
 	register_trace_android_vh_ufs_update_sdev(ufs_qcom_update_sdev, NULL);
+	register_trace_android_vh_ufs_prepare_command(
+				ufs_qcom_hook_prepare_command, NULL);
 }
 
 #ifdef CONFIG_ARM_QCOM_CPUFREQ_HW
@@ -6341,6 +6400,30 @@ ret:
 	return is_bootdevice_ufs;
 }
 
+#if IS_ENABLED(CONFIG_QTI_CRYPTO_FDE)
+static int ufs_crypto_probe_check(struct device *dev)
+{
+	struct platform_device *dep_pdev;
+	struct device_node *dep_dev;
+
+	dep_dev = of_parse_phandle(dev->of_node, "ufs-qcom-crypto", 0);
+	if (dep_dev) {
+		dep_pdev = of_find_device_by_node(dep_dev);
+		if (!dep_pdev || !dep_pdev->dev.driver) {
+			of_node_put(dep_dev);
+			dev_warn(dev, "Failed to create ufs-ice data structures\n");
+			if (dep_pdev)
+				platform_device_put(dep_pdev);
+			return -EPROBE_DEFER;
+		}
+		platform_device_put(dep_pdev);
+		of_node_put(dep_dev);
+		dev_dbg(dev, "ufs-ice probe successfully\n");
+	}
+	return 0;
+}
+#endif
+
 /**
  * ufs_qcom_probe - probe routine of the driver
  * @pdev: pointer to Platform device handle
@@ -6357,6 +6440,11 @@ static int ufs_qcom_probe(struct platform_device *pdev)
 		dev_err(dev, "UFS is not boot dev.\n");
 		return err;
 	}
+
+#if IS_ENABLED(CONFIG_QTI_CRYPTO_FDE)
+	if (ufs_crypto_probe_check(dev))
+		return -EPROBE_DEFER;
+#endif
 
 	/**
 	 * CPUFreq driver is needed for performance reasons.
