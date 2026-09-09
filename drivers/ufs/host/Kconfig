@@ -8,17 +8,6 @@
 #	Santosh Yaraganavi <santosh.sy@samsung.com>
 #	Vinayak Holikatti <h.vinayak@samsung.com>
 
-config UFS_DBG
-	bool "Universal Flash Storage Debug Mode"
-	depends on SCSI_UFSHCD
-	help
-	This selects the debug mode for ufs vendor driver.
-	  Enables tracing for QTI ufs driver.
-	  This also enables ftrace for ufs core and SCSI.
-	  Enabling this would have an adverse performance impact on disk IO.
-
-	  If unsure, say N.
-
 config SCSI_UFSHCD_PCI
 	tristate "PCI bus based UFS Controller support"
 	depends on PCI
@@ -83,6 +72,7 @@ config SCSI_UFS_QCOM
 config SCSI_UFS_MEDIATEK
 	tristate "Mediatek specific hooks to UFS controller platform driver"
 	depends on SCSI_UFSHCD_PLATFORM && ARCH_MEDIATEK
+	depends on PM
 	depends on RESET_CONTROLLER
 	select PHY_MTK_UFS
 	select RESET_TI_SYSCON
@@ -153,41 +143,3 @@ config SCSI_UFS_SPRD
 
 	  Select this if you have UFS controller on Unisoc chipset.
 	  If unsure, say N.
-
-config SCSI_UFS_CRYPTO_QTI
-	tristate "UFS Crypto Engine Support for QCOM Hardware Wrapped Keys"
-	depends on SCSI_UFS_CRYPTO && SCSI_UFS_QCOM && QCOM_INLINE_CRYPTO_ENGINE
-	help
-	  Enable Crypto Engine Support in UFS for QCOM chipsets supporting
-	  wrapped keys. This is explicitly required until wrapped keys support
-	  for QCOM chipsets is part of Linux upstream.
-
-	  Select this to enable QCOM Hardware Wrapped Key support for the
-	  ICE hardware.
-
-config UFSFEATURE
-	bool "UFS feature activate"
-	depends on SCSI_UFSHCD
-	help
-	  UFS feature activate such as tw, hid and etc.
-
-config UFSHID
-	bool "UFS Host Initiated Defrag support"
-	depends on SCSI_UFSHCD && UFSFEATURE
-	help
-	  UFS HID Feature Enable
-
-config UFSHID_POC
-	bool "UFSHID_POC test"
-	depends on SCSI_UFSHCD && UFSFEATURE && UFSHID
-	help
-	  UFS HID POC test
-	  1. block to enter suspend state
-	  2. auto_hibern8 enable/disable (HCI)
-	  3. set flag bDefragOperation
-	  4. debug msg enable (default : disable)
-config MICRON_UFSHID
-	tristate "micron Host Initiated Defrag support"
-	depends on SCSI_UFSHCD && UFSFEATURE && UFSHID
-	help
-	  Enable Micron HID feature

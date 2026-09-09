@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015, 2017-2018, 2022, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/bitops.h>
@@ -17,7 +16,6 @@
 #include <linux/reset-controller.h>
 #include <linux/slab.h>
 #include "gdsc.h"
-#include "gdsc-debug.h"
 
 #define PWR_ON_MASK		BIT(31)
 #define EN_REST_WAIT_MASK	GENMASK_ULL(23, 20)
@@ -142,18 +140,11 @@ static int gdsc_toggle_logic(struct gdsc *sc, enum gdsc_status status,
 		bool wait)
 {
 	int ret;
-	u32 val;
 
 	if (status == GDSC_ON && sc->rsupply) {
 		ret = regulator_enable(sc->rsupply);
 		if (ret < 0)
 			return ret;
-	}
-
-	regmap_read(sc->regmap, sc->gdscr, &val);
-	if (val & HW_CONTROL_MASK) {
-		pr_debug("%s in HW control mode\n", sc->pd.name);
-		return 0;
 	}
 
 	ret = gdsc_update_collapse_bit(sc, status == GDSC_OFF);
@@ -166,7 +157,7 @@ static int gdsc_toggle_logic(struct gdsc *sc, enum gdsc_status status,
 		 * unknown state
 		 */
 		udelay(TIMEOUT_US);
-		goto out;
+		return 0;
 	}
 
 	if (sc->gds_hw_ctrl) {
@@ -184,13 +175,8 @@ static int gdsc_toggle_logic(struct gdsc *sc, enum gdsc_status status,
 	}
 
 	ret = gdsc_poll_status(sc, status);
-	if (ret && sc->gds_hw_ctrl) {
-		pr_warn("%s enable timed out, Re-polling\n", sc->pd.name);
-		ret = gdsc_poll_status(sc, status);
-	}
 	WARN(ret, "%s status stuck at 'o%s'", sc->pd.name, status ? "ff" : "n");
 
-out:
 	if (!ret && status == GDSC_OFF && sc->rsupply) {
 		ret = regulator_disable(sc->rsupply);
 		if (ret < 0)
@@ -338,13 +324,6 @@ static int gdsc_disable(struct generic_pm_domain *domain)
 
 	/* Turn off HW trigger mode if supported */
 	if (sc->flags & HW_CTRL) {
-		if (sc->flags & HW_CTRL_SKIP_DIS) {
-			if (sc->rsupply)
-				return regulator_disable(sc->rsupply);
-
-			return 0;
-		}
-
 		ret = gdsc_hwctrl(sc, false);
 		if (ret < 0)
 			return ret;
@@ -497,9 +476,6 @@ static void gdsc_pm_subdomain_remove(struct gdsc_desc *desc, size_t num)
 	for (i = num - 1; i >= 0; i--) {
 		if (!scs[i])
 			continue;
-
-		gdsc_genpd_debug_unregister(scs[i]);
-
 		if (scs[i]->parent)
 			pm_genpd_remove_subdomain(scs[i]->parent, &scs[i]->pd);
 		else if (!IS_ERR_OR_NULL(dev->pm_domain))
@@ -556,11 +532,6 @@ int gdsc_register(struct gdsc_desc *desc,
 			ret = pm_genpd_add_subdomain(pd_to_genpd(dev->pm_domain), &scs[i]->pd);
 		if (ret)
 			goto err_pm_subdomain_remove;
-
-		ret = gdsc_genpd_debug_register(scs[i]);
-		if (ret)
-			dev_warn(dev, "Failed to register debugfs for %s ret=%d\n",
-							scs[i]->pd.name, ret);
 	}
 
 	return of_genpd_add_provider_onecell(dev->of_node, data);
@@ -601,15 +572,7 @@ void gdsc_unregister(struct gdsc_desc *desc)
  */
 int gdsc_gx_do_nothing_enable(struct generic_pm_domain *domain)
 {
-	struct gdsc *sc = domain_to_gdsc(domain);
-	int ret = 0;
-
-	/* Enable the parent supply, when controlled through the regulator framework. */
-	if (sc->rsupply)
-		ret = regulator_enable(sc->rsupply);
-
-	/* Do nothing with the GDSC itself */
-
-	return ret;
+	/* Do nothing but give genpd the impression that we were successful */
+	return 0;
 }
 EXPORT_SYMBOL_GPL(gdsc_gx_do_nothing_enable);

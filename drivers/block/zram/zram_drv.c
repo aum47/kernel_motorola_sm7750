@@ -1400,7 +1400,7 @@ static int zram_read_page(struct zram *zram, struct page *page, u32 index,
 
 	/* Should NEVER happen. Return bio error if it does. */
 	if (WARN_ON(ret < 0))
-		panic("Decompression failed! err=%d, page=%u\n", ret, index);
+		pr_err("Decompression failed! err=%d, page=%u\n", ret, index);
 
 	return ret;
 }
@@ -1881,7 +1881,7 @@ static void zram_bio_discard(struct zram *zram, struct bio *bio)
 	 */
 	if (offset) {
 		if (n <= (PAGE_SIZE - offset))
-			return;
+			goto end_bio;
 
 		n -= (PAGE_SIZE - offset);
 		index++;
@@ -1896,6 +1896,7 @@ static void zram_bio_discard(struct zram *zram, struct bio *bio)
 		n -= PAGE_SIZE;
 	}
 
+end_bio:
 	bio_endio(bio);
 }
 

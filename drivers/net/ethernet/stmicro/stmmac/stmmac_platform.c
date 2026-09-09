@@ -7,7 +7,6 @@
 
   Author: Giuseppe Cavallaro <peppe.cavallaro@st.com>
 *******************************************************************************/
-/* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. */
 
 #include <linux/device.h>
 #include <linux/platform_device.h>
@@ -215,7 +214,6 @@ static int stmmac_mtl_setup(struct platform_device *pdev,
 
 		queue++;
 	}
-
 	if (queue != plat->rx_queues_to_use) {
 		ret = -EINVAL;
 		dev_err(&pdev->dev, "Not all RX queues were configured\n");
@@ -283,7 +281,6 @@ static int stmmac_mtl_setup(struct platform_device *pdev,
 
 		queue++;
 	}
-
 	if (queue != plat->tx_queues_to_use) {
 		ret = -EINVAL;
 		dev_err(&pdev->dev, "Not all TX queues were configured\n");
@@ -763,14 +760,6 @@ int stmmac_get_platform_resources(struct platform_device *pdev,
 			return -EPROBE_DEFER;
 		dev_info(&pdev->dev, "IRQ eth_wake_irq not found\n");
 		stmmac_res->wol_irq = stmmac_res->irq;
-	}
-
-	stmmac_res->lpi_irq =
-		platform_get_irq_byname_optional(pdev, "eth_lpi");
-	if (stmmac_res->lpi_irq < 0) {
-		if (stmmac_res->lpi_irq == -EPROBE_DEFER)
-			return -EPROBE_DEFER;
-		dev_info(&pdev->dev, "IRQ eth_lpi not found\n");
 	}
 
 	stmmac_res->addr = devm_platform_ioremap_resource(pdev, 0);

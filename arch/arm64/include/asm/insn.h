@@ -399,7 +399,7 @@ __AARCH64_INSN_FUNCS(cbz,	0x7F000000, 0x34000000)
 __AARCH64_INSN_FUNCS(cbnz,	0x7F000000, 0x35000000)
 __AARCH64_INSN_FUNCS(tbz,	0x7F000000, 0x36000000)
 __AARCH64_INSN_FUNCS(tbnz,	0x7F000000, 0x37000000)
-__AARCH64_INSN_FUNCS(bcond,	0xFF000010, 0x54000000)
+__AARCH64_INSN_FUNCS(bcond,	0xFF000000, 0x54000000)
 __AARCH64_INSN_FUNCS(svc,	0xFFE0001F, 0xD4000001)
 __AARCH64_INSN_FUNCS(hvc,	0xFFE0001F, 0xD4000002)
 __AARCH64_INSN_FUNCS(smc,	0xFFE0001F, 0xD4000003)
@@ -568,6 +568,11 @@ aarch64_insn_gen_hint(enum aarch64_insn_hint_cr_op op)
 static __always_inline u32 aarch64_insn_gen_nop(void)
 {
 	return aarch64_insn_gen_hint(AARCH64_INSN_HINT_NOP);
+}
+
+static __always_inline bool aarch64_insn_is_nop(u32 insn)
+{
+	return insn == aarch64_insn_gen_nop();
 }
 
 u32 aarch64_insn_gen_branch_reg(enum aarch64_insn_register reg,

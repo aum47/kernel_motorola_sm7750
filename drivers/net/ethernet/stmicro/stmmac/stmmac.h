@@ -5,7 +5,6 @@
 
   Author: Giuseppe Cavallaro <peppe.cavallaro@st.com>
 *******************************************************************************/
-/* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. */
 
 #ifndef __STMMAC_H__
 #define __STMMAC_H__
@@ -30,7 +29,6 @@ struct stmmac_resources {
 	void __iomem *addr;
 	u8 mac[ETH_ALEN];
 	int wol_irq;
-	int lpi_irq;
 	int irq;
 	int sfty_ce_irq;
 	int sfty_ue_irq;
@@ -232,7 +230,6 @@ struct stmmac_priv {
 	struct mac_device_info *hw;
 	int (*hwif_quirks)(struct stmmac_priv *priv);
 	struct mutex lock;
-	struct phy_device *phydev;
 
 	struct stmmac_dma_conf dma_conf;
 
@@ -262,7 +259,6 @@ struct stmmac_priv {
 	bool wol_irq_disabled;
 	int clk_csr;
 	struct timer_list eee_ctrl_timer;
-	int lpi_irq;
 	int eee_enabled;
 	int eee_active;
 	int tx_lpi_timer;
@@ -344,9 +340,6 @@ enum stmmac_state {
 	STMMAC_RESETING,
 	STMMAC_SERVICE_SCHED,
 };
-
-#define GET_MEM_PDEV_DEV (priv->plat->stmmac_emb_smmu_ctx.valid ? \
-			&priv->plat->stmmac_emb_smmu_ctx.smmu_pdev->dev : priv->device)
 
 int stmmac_mdio_unregister(struct net_device *ndev);
 int stmmac_mdio_register(struct net_device *ndev);
