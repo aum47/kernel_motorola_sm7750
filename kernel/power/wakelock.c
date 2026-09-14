@@ -241,7 +241,7 @@ int pm_wake_lock(const char *buf)
 		do_div(timeout_ms, NSEC_PER_MSEC);
 		__pm_wakeup_event(wl->ws, timeout_ms);
 	} else {
-		__pm_stay_awake(wl->ws);
+		__pm_wakeup_event(wl->ws, 500);
 	}
 
 	wakelocks_lru_most_recent(wl);
@@ -286,3 +286,10 @@ int pm_wake_unlock(const char *buf)
 	mutex_unlock(&wakelocks_lock);
 	return ret;
 }
+/* palaziks: wakelock blocker list */
+static const char * const blocked_wakelocks[] = {
+    "WLAN_pm_wlock",
+    "IPA_WS",
+    "qcom_rx_wakelock",
+    "event0",
+};
