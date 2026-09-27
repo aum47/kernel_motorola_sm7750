@@ -5,6 +5,7 @@
  * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  * Copyright (c) 2019, Google LLC
  * Copyright (c) 2023, Linaro Limited
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/bitfield.h>
@@ -15,6 +16,9 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#if IS_ENABLED(CONFIG_QTI_HW_KEY_MANAGER_V1)
+#include "hwkm_v1.h"
+#endif
 
 #include <linux/firmware/qcom/qcom_scm.h>
 
@@ -73,6 +77,18 @@
 
 #define qcom_ice_readl(engine, reg)	\
 	readl((engine)->base + (reg))
+
+struct qcom_ice {
+	struct device *dev;
+	void __iomem *base;
+	struct device_link *link;
+
+	struct clk *core_clk;
+	u8 hwkm_version;
+	bool use_hwkm;
+	bool hwkm_init_complete;
+	bool handle_clks;
+};
 
 union crypto_cfg {
 	__le32 regval;
@@ -316,7 +332,8 @@ static int translate_hwkm_slot(struct qcom_ice *ice, int slot)
 {
 	int offset = 0;
 	u32 hwkm_version = 0;
-
+	if (!ice->use_hwkm)
+		return slot;
 	if (ice->hwkm_init_complete) {
 		hwkm_version = qcom_ice_readl(ice, HWKM_OFFSET(QTI_HWKM_ICE_RG_IPCAT_VERSION));
 		if (hwkm_version >= QCOM_ICE_HWKM_V2_0_0 && hwkm_version < QCOM_ICE_HWKM_V2_1_0)
@@ -336,6 +353,19 @@ static int qcom_ice_program_wrapped_key(struct qcom_ice *ice,
 	struct qtee_shm shm;
 
 	hwkm_slot = translate_hwkm_slot(ice, slot);
+
+#if IS_ENABLED(CONFIG_QTI_HW_KEY_MANAGER_V1)
+	err = qcom_hwkm_program_key(ice->base, key, hwkm_slot,
+				data_unit_size, QCOM_SCM_ICE_CIPHER_AES_256_XTS);
+	if (err) {
+		pr_err("%s: program key failed with error %d\n", __func__, err);
+		err = qcom_hwkm_invalidate_key(slot);
+		if (err)
+			pr_err("%s: invalidate key failed with error %d\n", __func__, err);
+	}
+
+	return err;
+#endif
 
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.dusize = data_unit_size;
@@ -358,9 +388,14 @@ static int qcom_ice_program_wrapped_key(struct qcom_ice *ice,
 	memcpy(shm.vaddr, key->raw, key->size);
 	qtee_shmbridge_flush_shm_buf(&shm);
 
-	/* Call trustzone to program the wrapped key using hwkm */
-	err = qcom_scm_config_set_ice_key(hwkm_slot, shm.paddr, key->size,
+	if (!ice->use_hwkm) {
+		err = qcom_scm_config_set_ice_key(hwkm_slot, shm.paddr, key->size,
+			QCOM_SCM_ICE_CIPHER_AES_256_XTS, data_unit_size, 0);
+	} else {
+		/* Call trustzone to program the wrapped key using hwkm */
+		err = qcom_scm_config_set_ice_key(hwkm_slot, shm.paddr, key->size,
 					  0, 0, 0);
+	}
 	if (err) {
 		pr_err("%s:SCM call Error: 0x%x slot %d\n", __func__, err,
 		       slot);
@@ -395,8 +430,6 @@ int qcom_ice_program_key_hwkm(struct qcom_ice *ice,
 	}
 
 	if (bkey->crypto_cfg.key_type == BLK_CRYPTO_KEY_TYPE_HW_WRAPPED) {
-		if (!ice->use_hwkm)
-			return -EINVAL;
 		err = qcom_ice_program_wrapped_key(ice, bkey, data_unit_size,
 						   slot);
 	}
@@ -449,6 +482,10 @@ int qcom_ice_evict_key(struct qcom_ice *ice, int slot)
 {
 	int hwkm_slot = slot;
 
+#if IS_ENABLED(CONFIG_QTI_HW_KEY_MANAGER_V1)
+	return qcom_hwkm_invalidate_key(slot);
+#endif
+
 	if (ice->use_hwkm) {
 		hwkm_slot = translate_hwkm_slot(ice, slot);
 	/*
@@ -477,6 +514,11 @@ int qcom_ice_derive_sw_secret(struct qcom_ice *ice, const u8 wkey[],
 {
 	int err = 0;
 	struct qtee_shm shm_key, shm_secret;
+
+#if IS_ENABLED(CONFIG_QTI_HW_KEY_MANAGER_V1)
+	return qcom_hwkm_derive_raw_secret_platform(wkey,
+				wkey_size, sw_secret, BLK_CRYPTO_SW_SECRET_SIZE);
+#endif
 
 	/*
 	 * The following logic for shmbridge will be taken care in SCM driver

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015, 2017-2018, 2022, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/bitops.h>
@@ -497,6 +497,9 @@ static void gdsc_pm_subdomain_remove(struct gdsc_desc *desc, size_t num)
 	for (i = num - 1; i >= 0; i--) {
 		if (!scs[i])
 			continue;
+
+		gdsc_genpd_debug_unregister(scs[i]);
+
 		if (scs[i]->parent)
 			pm_genpd_remove_subdomain(scs[i]->parent, &scs[i]->pd);
 		else if (!IS_ERR_OR_NULL(dev->pm_domain))
@@ -507,7 +510,7 @@ static void gdsc_pm_subdomain_remove(struct gdsc_desc *desc, size_t num)
 int gdsc_register(struct gdsc_desc *desc,
 		  struct reset_controller_dev *rcdev, struct regmap *regmap)
 {
-	int i, ret;
+	int i, ret = 0;
 	struct genpd_onecell_data *data;
 	struct device *dev = desc->dev;
 	struct gdsc **scs = desc->scs;
@@ -570,18 +573,9 @@ err_pm_subdomain_remove:
 
 void gdsc_unregister(struct gdsc_desc *desc)
 {
-	int i;
 	struct device *dev = desc->dev;
-	struct gdsc **scs = desc->scs;
 	size_t num = desc->num;
 
-	/* Remove subdomains */
-	for (i = 0; i < num; i++) {
-		if (!scs[i])
-			continue;
-
-		gdsc_genpd_debug_unregister(scs[i]);
-	}
 	gdsc_pm_subdomain_remove(desc, num);
 	of_genpd_del_provider(dev->of_node);
 }

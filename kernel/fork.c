@@ -117,6 +117,7 @@
 #undef CREATE_TRACE_POINTS
 #include <trace/hooks/sched.h>
 #include <trace/hooks/dtask.h>
+#include <trace/hooks/mm.h>
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -958,6 +959,7 @@ void __mmdrop(struct mm_struct *mm)
 	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
 	trace_android_vh_mmap_lock_free(&mm->mmap_lock);
 
+	trace_android_vh_mm_free(mm);
 	free_mm(mm);
 }
 EXPORT_SYMBOL_GPL(__mmdrop);
@@ -1003,7 +1005,6 @@ void __put_task_struct(struct task_struct *tsk)
 	WARN_ON(refcount_read(&tsk->usage));
 	WARN_ON(tsk == current);
 
-	trace_android_vh_put_task(tsk);
 	put_dmabuf_info(tsk->dmabuf_info);
 	io_uring_free(tsk);
 	cgroup_free(tsk);
@@ -1357,6 +1358,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 
 	mm->user_ns = get_user_ns(user_ns);
 	lru_gen_init_mm(mm);
+	trace_android_vh_mm_init(mm);
 	return mm;
 
 fail_pcpu:
@@ -3609,14 +3611,14 @@ int unshare_files(void)
 	task->files = copy;
 
 	/*
-	 * This is a new partial sharing relationship for the current task, since we have a new
-	 * files_struct (and the MM might still be shared). Since partial sharing is not
-	 * supported for dmabuf accounting, we need to remove the accounting info from the task.
-	 * Leave the mm->dmabuf_info so any existing accounting can be unaccounted properly. For
-	 * execs where we also have a new MM, the fixup for this new files_struct happens externally
-	 * with appropriate locking in dma_buf_begin_new_exec.
+	 * This is a new partial sharing relationship for task, since we have a new
+	 * files_struct (but the MM is still used). Since partial sharing is not
+	 * supported for dmabuf accounting, we need to remove the accounting info
+	 * from the task. Leave the mm->dmabuf_info so any existing accounting can
+	 * be unaccounted properly. The fixup for this new files_struct happens
+	 * externally with appropriate locking.
 	 */
-	dmabuf_info = task->dmabuf_info;
+	put_dmabuf_info(task->dmabuf_info);
 	task->dmabuf_info = NULL;
 	task_unlock(task);
 	put_dmabuf_info(dmabuf_info);

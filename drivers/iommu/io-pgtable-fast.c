@@ -149,9 +149,10 @@ static void __av8l_clean_range(struct device *dev, void *start, void *end)
 
 	if (is_vmalloc_addr(start)) {
 		while (start < end) {
-			unsigned long offset = offset_in_page(start);
-
-			size = min_t(size_t, end - start, PAGE_SIZE - offset);
+			page_end = round_down((unsigned long)start + PAGE_SIZE,
+					      PAGE_SIZE);
+			region_end = min_t(void *, end, (void *)page_end);
+			size = region_end - start;
 			dma_sync_single_for_device(dev, av8l_dma_addr(start),
 						   size, DMA_TO_DEVICE);
 			start += size;

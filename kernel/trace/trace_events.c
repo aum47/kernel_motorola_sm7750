@@ -677,6 +677,8 @@ int trace_event_reg(struct trace_event_call *call,
 
 #ifdef CONFIG_PERF_EVENTS
 	case TRACE_REG_PERF_REGISTER:
+		if (!call->class->perf_probe)
+			return -ENODEV;
 		return tracepoint_probe_register(call->tp,
 						 call->class->perf_probe,
 						 call);
@@ -3078,6 +3080,9 @@ trace_create_new_event(struct trace_event_call *call,
 						      trace_array);
 
 	if (!event_in_systems(call, tr_ext->system_names))
+		return NULL;
+
+	if (!event_in_systems(call, trace_array_get_system_names(tr)))
 		return NULL;
 
 	if (!event_in_systems(call, trace_array_get_system_names(tr)))
