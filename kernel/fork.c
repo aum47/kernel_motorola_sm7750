@@ -3599,7 +3599,7 @@ int unshare_files(void)
 {
 	struct task_struct *task = current;
 	struct files_struct *old, *copy = NULL;
-	struct task_dma_buf_info *dmabuf_info;
+	struct task_dma_buf_info *dmabuf_info = NULL;;
 	int error;
 
 	error = unshare_fd(CLONE_FILES, &copy);
