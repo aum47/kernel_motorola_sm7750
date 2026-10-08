@@ -10,3 +10,6 @@
 [submodule "Droidspaces-OSS"]
 	path = Droidspaces-OSS
 	url = https://github.com/ravindu644/Droidspaces-OSS
+[submodule "Re-Kernel"]
+	path = rekernel
+	url = https://github.com/Sakion-Team/Re-Kernel
