@@ -835,3 +835,6 @@ CONFIG_KSU_MANUAL_HOOK=y
 
 #Baseband Guard
 CONFIG_BBG=y
+
+#Bore Scheduler
+CONFIG_SCHED_BORE=y
