@@ -4,3 +4,6 @@
 [submodule "susfs4ksu"]
 	path = susfs4ksu
 	url = https://gitlab.com/simonpunk/susfs4ksu
+[submodule "Baseband-guard"]
+	path = Baseband-guard
+	url = https://github.com/vc-teahouse/Baseband-guard
