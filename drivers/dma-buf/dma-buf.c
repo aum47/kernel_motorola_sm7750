@@ -406,7 +406,7 @@ static int __dma_buf_account_task(struct dma_buf *dmabuf, struct task_dma_buf_in
 	struct task_dma_buf_record *rec;
 	int ret = 0;
 
-	if (!static_key_enabled(&dmabuf_accounting_key))
+	if (!is_dmabuf_accounting_enabled())
 		return 0;
 
 	if (!dmabuf_info)
@@ -469,7 +469,7 @@ void dma_buf_unaccount_task(struct dma_buf *dmabuf, struct task_dma_buf_info *dm
 {
 	struct task_dma_buf_record *rec;
 
-	if (!static_key_enabled(&dmabuf_accounting_key))
+	if (!is_dmabuf_accounting_enabled())
 		return;
 
 	if (!dmabuf_info)
@@ -599,12 +599,12 @@ static struct task_dma_buf_info *compute_dmabuf_info(struct task_struct *task)
 
 int copy_dmabuf_info(u64 clone_flags, struct task_struct *task)
 {
-	struct task_dma_buf_info *parent_dmabuf_info = current->dmabuf_info;
+	struct task_dma_buf_info *parent_dmabuf_info;
 	struct task_dma_buf_info *child_dmabuf_info;
 	bool share_vm = clone_flags & CLONE_VM;
 	bool share_fs = clone_flags & CLONE_FILES;
 
-	if (!static_key_enabled(&dmabuf_accounting_key))
+	if (!is_dmabuf_accounting_enabled())
 		return 0;
 
 	/* kthreads are not supported */
@@ -626,12 +626,22 @@ int copy_dmabuf_info(u64 clone_flags, struct task_struct *task)
 		return 0;
 	}
 
-	/*
-	 * Partial sharing is not supported.
-	 * Children of such tasks are also not supported.
-	 */
-	if (share_vm != share_fs || !parent_dmabuf_info) {
+	task_lock(current);
+	parent_dmabuf_info = current->dmabuf_info;
+	if (parent_dmabuf_info)
+		get_dmabuf_info(parent_dmabuf_info);
+	task_unlock(current);
+
+	/* Children of tasks with no accounting info are not supported. */
+	if (!parent_dmabuf_info) {
 		task->dmabuf_info = NULL;
+		return 0;
+	}
+
+	/* Partial sharing is not supported. */
+	if (share_vm != share_fs) {
+		task->dmabuf_info = NULL;
+		put_dmabuf_info(parent_dmabuf_info);
 		return 0;
 	}
 
@@ -640,18 +650,8 @@ int copy_dmabuf_info(u64 clone_flags, struct task_struct *task)
 	 * the parent, so they can both share the same dmabuf_info.
 	 */
 	if (share_vm && share_fs) {
-		refcount_inc(&parent_dmabuf_info->refcnt);
+		/* task takes the parent_dmabuf_info with the elevated refcount. */
 		task->dmabuf_info = parent_dmabuf_info;
-
-		if (task->mm) {
-			refcount_inc(&task->dmabuf_info->refcnt);
-			task->mm->dmabuf_info = task->dmabuf_info;
-		}
-
-		if (task->files) {
-			refcount_inc(&task->dmabuf_info->refcnt);
-			task->files->dmabuf_info = task->dmabuf_info;
-		}
 		return 0;
 	}
 
@@ -662,6 +662,7 @@ int copy_dmabuf_info(u64 clone_flags, struct task_struct *task)
 	 * the child. Construct the dmabuf accounting info for the child here based on what actually
 	 * made it into the child's files_struct and mm_struct.
 	 */
+	put_dmabuf_info(parent_dmabuf_info);
 	child_dmabuf_info = compute_dmabuf_info(task);
 	if (!child_dmabuf_info)
 		return -ENOMEM;
@@ -669,15 +670,20 @@ int copy_dmabuf_info(u64 clone_flags, struct task_struct *task)
 	task->dmabuf_info = child_dmabuf_info;
 
 	if (task->mm) {
-		refcount_inc(&child_dmabuf_info->refcnt);
+		get_dmabuf_info(child_dmabuf_info);
 		task->mm->dmabuf_info = child_dmabuf_info;
 	}
 	if (task->files) {
-		refcount_inc(&child_dmabuf_info->refcnt);
+		get_dmabuf_info(child_dmabuf_info);
 		task->files->dmabuf_info = child_dmabuf_info;
 	}
 
 	return 0;
+}
+
+void get_dmabuf_info(struct task_dma_buf_info *dmabuf_info)
+{
+	refcount_inc(&dmabuf_info->refcnt);
 }
 
 void put_dmabuf_info(struct task_dma_buf_info *dmabuf_info)
@@ -711,10 +717,10 @@ void put_dmabuf_info(struct task_dma_buf_info *dmabuf_info)
 int dma_buf_begin_new_exec(struct files_struct *old_files)
 {
 	struct task_dma_buf_info *new_dmabuf_info;
-	struct task_dma_buf_info *old_dmabuf_info = current->dmabuf_info;
+	struct task_dma_buf_info *old_dmabuf_info;
 	struct files_struct *my_files = current->files;
 
-	if (!static_key_enabled(&dmabuf_accounting_key))
+	if (!is_dmabuf_accounting_enabled())
 		return 0;
 
 	new_dmabuf_info = alloc_task_dma_buf_info();
@@ -725,6 +731,7 @@ int dma_buf_begin_new_exec(struct files_struct *old_files)
 	if (my_files) {
 		size_t num_dmabuf_fds, num_dmabuf_fds_check;
 		unsigned int retries = 0;
+		unsigned int max_fds;
 
 		/* Attempt to count dmabuf FDs locklessly before allocating */
 		rcu_read_lock();
@@ -753,7 +760,8 @@ retry:
 			goto retry;
 		}
 
-		for (unsigned int n = 0; n < files_fdtable(my_files)->max_fds; n++) {
+		max_fds = files_fdtable(my_files)->max_fds;
+		for (unsigned int n = 0; n < max_fds; n++) {
 			struct file *file = files_lookup_fd_locked(my_files, n);
 			int err;
 
@@ -761,9 +769,11 @@ retry:
 				continue;
 
 			err = __dma_buf_account_task(file->private_data, new_dmabuf_info, false);
-			if (err)
+			if (err) {
 				pr_err("dmabuf accounting failed during begin_new_exec, err %d\n",
 				       err);
+				continue;
+			}
 
 			/*
 			 * No put_files_struct in this case, so buffers don't get closed and
@@ -781,7 +791,7 @@ retry:
 			put_dmabuf_info(my_files->dmabuf_info);
 
 		/* Finally swap over to the new dmabuf info */
-		refcount_inc(&new_dmabuf_info->refcnt);
+		get_dmabuf_info(new_dmabuf_info);
 		my_files->dmabuf_info = new_dmabuf_info;
 		spin_unlock(&my_files->file_lock);
 
@@ -789,7 +799,10 @@ retry:
 		task_dmabuf_records_preload_end();
 	}
 
+	task_lock(current);
+	old_dmabuf_info = current->dmabuf_info;
 	current->dmabuf_info = new_dmabuf_info; // refcount from alloc_task_dma_buf_info
+	task_unlock(current);
 	put_dmabuf_info(old_dmabuf_info);
 
 	return 0;
@@ -821,7 +834,14 @@ static int dma_buf_mmap_internal(struct file *file, struct vm_area_struct *vma)
 		return -EINVAL;
 
 	ret = dmabuf->ops->mmap(dmabuf, vma);
-	if (!ret) {
+	if (!ret && vma->vm_file == file) {
+		/*
+		 * dmabuf VMAs must not be mergeable. If the exporter forgot to set a VM_SPECIAL
+		 * flag, force one now.
+		 */
+		if (WARN_ON(!(vma->vm_flags & VM_SPECIAL)))
+			vm_flags_set(vma, VM_DONTEXPAND);
+
 		int err = dma_buf_account_task(dmabuf, vma->vm_mm->dmabuf_info);
 
 		if (err)
@@ -2225,7 +2245,14 @@ int dma_buf_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma,
 	vma->vm_pgoff = pgoff;
 
 	ret = dmabuf->ops->mmap(dmabuf, vma);
-	if (!ret) {
+	if (!ret && vma->vm_file == dmabuf->file) {
+		/*
+		 * dmabuf VMAs must not be mergeable. If the exporter forgot to set a VM_SPECIAL
+		 * flag, force one now.
+		 */
+		if (WARN_ON(!(vma->vm_flags & VM_SPECIAL)))
+			vm_flags_set(vma, VM_DONTEXPAND);
+
 		int err = dma_buf_account_task(dmabuf, vma->vm_mm->dmabuf_info);
 
 		if (err)
@@ -2481,7 +2508,7 @@ static int __init setup_early_dmabuf_accounting(char *str)
 	if (kstrtobool(str, &enable))
 		return -EINVAL;
 
-	if (enable != static_key_enabled(&dmabuf_accounting_key)) {
+	if (enable != is_dmabuf_accounting_enabled()) {
 		if (enable)
 			static_branch_enable(&dmabuf_accounting_key);
 		else

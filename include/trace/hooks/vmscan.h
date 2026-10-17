@@ -8,6 +8,8 @@
 #define _TRACE_HOOK_VMSCAN_H
 
 #include <trace/hooks/vendor_hooks.h>
+struct lruvec;
+struct scan_control;
 
 DECLARE_RESTRICTED_HOOK(android_rvh_set_balance_anon_file_reclaim,
 			TP_PROTO(bool *balance_anon_file_reclaim),
@@ -15,6 +17,17 @@ DECLARE_RESTRICTED_HOOK(android_rvh_set_balance_anon_file_reclaim,
 DECLARE_RESTRICTED_HOOK(android_rvh_kswapd_shrink_node,
 			TP_PROTO(unsigned long *nr_reclaimed),
 			TP_ARGS(nr_reclaimed), 1);
+DECLARE_RESTRICTED_HOOK(android_rvh_shrink_spec_lru,
+	TP_PROTO(struct lruvec *lruvec, struct scan_control *sc,
+		 unsigned long *nr_reclaimed, unsigned long nr_to_reclaim,
+		 bool proportional_reclaim, const unsigned long *nr,
+		 bool *skip),
+	TP_ARGS(lruvec, sc, nr_reclaimed, nr_to_reclaim,
+		proportional_reclaim, nr, skip), 1);
+DECLARE_RESTRICTED_HOOK(android_rvh_kswapd_shrink_node_bypass,
+			TP_PROTO(unsigned long *nr_to_reclaim, unsigned long *nr_scanned,
+			unsigned long *nr_reclaimed, bool *bypass),
+			TP_ARGS(nr_to_reclaim, nr_scanned, nr_reclaimed, bypass), 1);
 DECLARE_HOOK(android_vh_tune_swappiness,
 	TP_PROTO(int *swappiness),
 	TP_ARGS(swappiness));
@@ -38,6 +51,11 @@ DECLARE_HOOK(android_vh_vmscan_kswapd_done,
 	TP_PROTO(int node_id, unsigned int highest_zoneidx, unsigned int alloc_order,
 	        unsigned int reclaim_order),
 	TP_ARGS(node_id, highest_zoneidx, alloc_order, reclaim_order));
+DECLARE_RESTRICTED_HOOK(android_rvh_mglru_shrink_spec_lru,
+	TP_PROTO(struct lruvec *lruvec, struct scan_control *sc,
+		int swappiness, int *delta, unsigned long nr_to_scan,
+		unsigned long *scanned, bool *skip),
+	TP_ARGS(lruvec, sc, swappiness, delta, nr_to_scan, scanned, skip), 1);
 DECLARE_RESTRICTED_HOOK(android_rvh_vmscan_kswapd_wake,
 	TP_PROTO(int node_id, unsigned int highest_zoneidx, unsigned int alloc_order),
 	TP_ARGS(node_id, highest_zoneidx, alloc_order), 1);
