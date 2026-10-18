@@ -830,3 +830,6 @@ CONFIG_WIREGUARD=y
 
 # KernelSU
 CONFIG_KSU=y
+
+# Baseband-guard
+CONFIG_BBG=y
