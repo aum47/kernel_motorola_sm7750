@@ -7,3 +7,6 @@
 [submodule "Droidspaces-OSS"]
 	path = Droidspaces-OSS
 	url = https://github.com/ravindu644/Droidspaces-OSS
+[submodule "nomount"]
+	path = NoMount
+	url = https://github.com/maxsteeel/nomount
